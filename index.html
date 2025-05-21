@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>カメラ映像遅延アプリ</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .video-container {
+            margin: 20px 0;
+            position: relative;
+        }
+        video {
+            width: 100%;
+            max-width: 640px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        label {
+            min-width: 150px;
+            text-align: right;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #3367d6;
+        }
+        .delay-value {
+            min-width: 60px;
+            text-align: left;
+        }
+        .status-message {
+            margin: 10px 0;
+            color: #666;
+        }
+        .permission-guide {
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            text-align: left;
+        }
+        .permission-guide h3 {
+            margin-top: 0;
+        }
+        .permission-guide li {
+            margin-bottom: 8px;
+        }
+        .camera-select-container {
+            margin: 15px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        select {
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        .shortcut-guide {
+            margin-top: 20px;
+            background-color: #f0f8ff;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: left;
+        }
+        .shortcut-guide h3 {
+            margin-top: 0;
+        }
+        .shortcut-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .shortcut-table th, .shortcut-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .shortcut-table th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>カメラ映像遅延アプリ</h1>
+    
+    <div class="video-container">
+        <video id="original" autoplay muted style="display: none;"></video>
+        <video id="delayed" autoplay muted playsinline></video>
+    </div>
+    
+    <div id="status" class="status-message">
+        「開始」ボタンをクリックして、カメラへのアクセスを許可してください。
+    </div>
+    
+    <div class="camera-select-container">
+        <label for="camera-select">カメラ選択:</label>
+        <select id="camera-select" disabled>
+            <option value="">カメラを選択してください</option>
+        </select>
+        <button id="refresh-cameras-btn">更新</button>
+    </div>
+    
+    <div class="controls">
+        <div class="slider-container">
+            <label for="delay-slider">遅延時間:</label>
+            <input type="range" id="delay-slider" min="0" max="50" value="10" step="1">
+            <span id="delay-value" class="delay-value">1.0秒</span>
+        </div>
+        
+        <div>
+            <button id="start-btn">開始</button>
+            <button id="stop-btn" disabled>停止</button>
+        </div>
+    </div>
+    
+    <div class="shortcut-guide">
+        <h3>キーボードショートカット</h3>
+        <p>数字キーを押すことで素早く遅延時間を設定できます：</p>
+        <table class="shortcut-table">
+            <tr>
+                <th>キー</th>
+                <th>機能</th>
+            </tr>
+            <tr>
+                <td>0</td>
+                <td>遅延なし (0.0秒)</td>
+            </tr>
+            <tr>
+                <td>1〜9</td>
+                <td>小さい遅延 (0.1〜0.9秒)</td>
+            </tr>
+            <tr>
+                <td>Shift + 1〜9</td>
+                <td>大きい遅延 (1.0〜9.0秒)</td>
+            </tr>
+            <tr>
+                <td>スペース</td>
+                <td>開始/停止の切り替え</td>
+            </tr>
+        </table>
+        <p><strong>注意</strong>: キーボードショートカットを使う場合は、テキスト入力欄にフォーカスが当たっていないことを確認してください。</p>
+    </div>
+    
+    <div class="permission-guide">
+        <h3>カメラが映らない場合</h3>
+        <ol>
+            <li>ブラウザのカメラ権限を確認してください。アドレスバーの左側にカメラアイコンが表示されている場合は、クリックして「許可」に設定されているか確認してください。</li>
+            <li>他のアプリケーションがカメラを使用している場合は、それらを閉じてからこのページを再読み込みしてください。</li>
+            <li>デバイスに複数のカメラがある場合は、使用したいカメラが有効になっているか確認してください。</li>
+            <li>HTTPSで接続していることを確認してください。現代のブラウザでは、安全な接続（HTTPS）上でのみカメラへのアクセスが許可されます。</li>
+        </ol>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html> 
