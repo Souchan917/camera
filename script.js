@@ -17,6 +17,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const cameraSelect = document.getElementById('camera-select');
     const refreshCamerasBtn = document.getElementById('refresh-cameras-btn');
 
+    // PeerJS関連の要素
+    const remoteVideoContainer = document.getElementById('remote-video-container');
+    const remoteVideo = document.getElementById('remote-video');
+    const localPeerId = document.getElementById('local-peer-id');
+    const remotePeerId = document.getElementById('remote-peer-id');
+    const broadcastBtn = document.getElementById('broadcast-btn');
+    const stopBroadcastBtn = document.getElementById('stop-broadcast-btn');
+    const modeIndicator = document.getElementById('mode-indicator');
+    const streamingTitle = document.getElementById('streaming-title');
+    const remotePeerContainer = document.getElementById('remote-peer-container');
+    
     // キャンバスとコンテキストの作成
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -29,6 +40,205 @@ document.addEventListener('DOMContentLoaded', () => {
     let delaySeconds = 1.0; // デフォルト遅延時間
     let cameraDevices = []; // カメラデバイスのリスト
     let isStreamStarted = false; // ストリームが開始されているかのフラグ
+    
+    // PeerJS関連の変数
+    let peer = null;
+    let currentCall = null;
+    let isBroadcasting = false;
+    let isReceiving = false;
+    let appMode = 'normal'; // normal, broadcast, view
+    
+    // URLパラメータからモードを取得
+    function getAppMode() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get('mode');
+        
+        if (mode === 'view') {
+            return 'view';
+        } else if (mode === 'broadcast') {
+            return 'broadcast';
+        } else {
+            return 'normal';
+        }
+    }
+    
+    // モードに基づいてUI要素を設定
+    function setupUIForMode() {
+        appMode = getAppMode();
+        
+        switch (appMode) {
+            case 'broadcast':
+                modeIndicator.textContent = '配信モード';
+                streamingTitle.textContent = 'カメラ映像配信';
+                remotePeerContainer.style.display = 'block';
+                remoteVideoContainer.style.display = 'none';
+                updateStatus('「配信開始」ボタンをクリックして配信を開始してください。');
+                break;
+                
+            case 'view':
+                modeIndicator.textContent = '受信モード';
+                streamingTitle.textContent = 'カメラ映像受信';
+                remotePeerContainer.style.display = 'none';
+                remoteVideoContainer.style.display = 'block';
+                updateStatus('配信側からの接続を待機しています...');
+                break;
+                
+            default:
+                modeIndicator.textContent = '通常モード';
+                document.getElementById('streaming-controls').style.display = 'none';
+                updateStatus('「開始」ボタンをクリックして、カメラへのアクセスを許可してください。');
+        }
+    }
+    
+    // PeerJSの初期化
+    function initializePeer() {
+        // PeerJS インスタンスの作成
+        if (appMode === 'view') {
+            // 受信側は固定IDを使用
+            peer = new Peer('tabletid', {
+                debug: 2
+            });
+        } else {
+            // 配信側はランダムIDを使用
+            peer = new Peer({
+                debug: 2
+            });
+        }
+        
+        // Peer接続イベントの設定
+        peer.on('open', (id) => {
+            console.log('My peer ID is: ' + id);
+            localPeerId.textContent = id;
+            
+            if (appMode === 'broadcast') {
+                broadcastBtn.disabled = false;
+            }
+            
+            updateStatus(appMode === 'view' ? 
+                '接続準備完了。配信側からの映像を待機しています...' : 
+                'Peer接続が確立されました。');
+        });
+        
+        peer.on('error', (err) => {
+            console.error('Peer接続エラー:', err);
+            let errorMsg = 'Peer接続エラー: ';
+            
+            if (err.type === 'unavailable-id') {
+                errorMsg += 'IDが既に使用されています。';
+            } else if (err.type === 'network') {
+                errorMsg += 'ネットワーク接続の問題が発生しました。';
+            } else {
+                errorMsg += err.message;
+            }
+            
+            updateStatus(errorMsg);
+        });
+        
+        // 受信側の場合、着信に応答する処理
+        if (appMode === 'view') {
+            peer.on('call', (call) => {
+                console.log('着信がありました');
+                updateStatus('配信側から接続されました。映像を受信しています...');
+                
+                // 着信に応答（映像は送らないので空のストリーム）
+                call.answer();
+                
+                // 相手からのストリームを受信したとき
+                call.on('stream', (remoteStream) => {
+                    console.log('リモートストリームを受信しました');
+                    
+                    // 受信した映像をビデオ要素に設定
+                    remoteVideo.srcObject = remoteStream;
+                    isReceiving = true;
+                    
+                    remoteVideo.onloadedmetadata = () => {
+                        remoteVideo.play().catch(e => {
+                            console.error('リモートビデオの再生開始に失敗しました:', e);
+                        });
+                    };
+                });
+                
+                // 通話が終了したとき
+                call.on('close', () => {
+                    console.log('通話が終了しました');
+                    updateStatus('配信が終了しました。新しい配信を待機しています...');
+                    remoteVideo.srcObject = null;
+                    isReceiving = false;
+                });
+                
+                // エラーが発生したとき
+                call.on('error', (err) => {
+                    console.error('通話中にエラーが発生しました:', err);
+                    updateStatus('通話中にエラーが発生しました: ' + err.message);
+                });
+                
+                // 現在の通話を保存
+                currentCall = call;
+            });
+        }
+    }
+    
+    // 配信開始処理
+    function startBroadcasting() {
+        if (!mediaStream) {
+            updateStatus('カメラが開始されていません。まずカメラを開始してください。');
+            return;
+        }
+        
+        if (!peer) {
+            updateStatus('Peer接続が初期化されていません。');
+            return;
+        }
+        
+        try {
+            // tabletidに配信
+            const call = peer.call('tabletid', mediaStream);
+            
+            call.on('stream', (remoteStream) => {
+                console.log('受信側のストリームを受信（ただし使用しない）');
+            });
+            
+            call.on('close', () => {
+                console.log('配信が終了しました');
+                updateStatus('配信が終了しました。');
+                stopBroadcastBtn.disabled = true;
+                broadcastBtn.disabled = false;
+                isBroadcasting = false;
+            });
+            
+            call.on('error', (err) => {
+                console.error('配信中にエラーが発生しました:', err);
+                updateStatus('配信中にエラーが発生しました: ' + err.message);
+            });
+            
+            currentCall = call;
+            isBroadcasting = true;
+            updateStatus('配信を開始しました。ID: tabletid へ送信中...');
+            broadcastBtn.disabled = true;
+            stopBroadcastBtn.disabled = false;
+            
+        } catch (error) {
+            console.error('配信開始中にエラーが発生しました:', error);
+            updateStatus('配信開始中にエラーが発生しました: ' + error.message);
+        }
+    }
+    
+    // 配信停止処理
+    function stopBroadcasting() {
+        if (currentCall) {
+            currentCall.close();
+            currentCall = null;
+        }
+        
+        isBroadcasting = false;
+        updateStatus('配信を停止しました。');
+        broadcastBtn.disabled = false;
+        stopBroadcastBtn.disabled = true;
+    }
+    
+    // 配信ボタンのイベントリスナー
+    broadcastBtn.addEventListener('click', startBroadcasting);
+    stopBroadcastBtn.addEventListener('click', stopBroadcasting);
 
     // ステータスメッセージの更新
     function updateStatus(message) {
@@ -65,6 +275,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 cameraSelect.disabled = false;
                 updateStatus(`${videoDevices.length}台のカメラが見つかりました。カメラを選択して「開始」をクリックしてください。`);
+                
+                // 配信モードの場合はボタンを有効化
+                if (appMode === 'broadcast' && peer && peer.id) {
+                    broadcastBtn.disabled = false;
+                }
             } else {
                 const option = document.createElement('option');
                 option.value = '';
@@ -73,6 +288,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 cameraSelect.disabled = true;
                 updateStatus('カメラデバイスが見つかりません。カメラの接続を確認してください。');
+                
+                if (appMode === 'broadcast') {
+                    broadcastBtn.disabled = true;
+                }
             }
         } catch (error) {
             console.error('カメラデバイスの取得に失敗しました:', error);
@@ -152,6 +371,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 stopBtn.disabled = false;
                 startBtn.textContent = '停止';
                 isStreamStarted = true;
+                
+                // 配信モードの場合、配信ボタンを有効化
+                if (appMode === 'broadcast' && peer && peer.id) {
+                    broadcastBtn.disabled = false;
+                }
             };
             
             // ビデオの再生開始
@@ -245,6 +469,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ストリーミングの停止
     function stopStreaming() {
+        if (isBroadcasting) {
+            stopBroadcasting();
+        }
+        
         if (mediaStream) {
             mediaStream.getTracks().forEach(track => track.stop());
             mediaStream = null;
@@ -263,6 +491,10 @@ document.addEventListener('DOMContentLoaded', () => {
         stopBtn.disabled = true;
         startBtn.textContent = '開始';
         isStreamStarted = false;
+        
+        if (appMode === 'broadcast') {
+            broadcastBtn.disabled = true;
+        }
         
         updateStatus('映像の表示を停止しました。「開始」ボタンを押すと再開します。');
     }
@@ -326,6 +558,38 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // 初期化時にカメラデバイスを取得
-    getAvailableCameras();
+    // アプリケーションの初期化
+    function initializeApp() {
+        // UIの設定
+        setupUIForMode();
+        
+        // PeerJSの初期化（通常モード以外）
+        if (appMode !== 'normal') {
+            initializePeer();
+        }
+        
+        // カメラデバイスの取得
+        getAvailableCameras();
+    }
+    
+    // ページ終了時やナビゲーション時の後処理
+    window.addEventListener('beforeunload', () => {
+        // ストリームの停止
+        if (isStreamStarted) {
+            stopStreaming();
+        }
+        
+        // 配信の停止
+        if (isBroadcasting) {
+            stopBroadcasting();
+        }
+        
+        // Peer接続の終了
+        if (peer) {
+            peer.destroy();
+        }
+    });
+    
+    // アプリケーションの初期化
+    initializeApp();
 }); 
